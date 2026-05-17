@@ -30,9 +30,6 @@ Note that if your server is not accessible on the open web, you can use ngrok, o
 import os.path
 
 # ruff: noqa: E402
-import json_numpy
-
-json_numpy.patch()
 import json
 import logging
 import traceback
@@ -41,12 +38,16 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import draccus
+import json_numpy
+import numpy as np
 import torch
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from PIL import Image
 from transformers import AutoModelForVision2Seq, AutoProcessor
+
+json_numpy.patch()
 
 # === Utilities ===
 SYSTEM_PROMPT = (
@@ -64,7 +65,7 @@ def get_openvla_prompt(instruction: str, openvla_path: Union[str, Path]) -> str:
 
 # === Server Interface ===
 class OpenVLAServer:
-    def __init__(self, openvla_path: Union[str, Path], attn_implementation: Optional[str] = "flash_attention_2") -> Path:
+    def __init__(self, openvla_path: Union[str, Path], attn_implementation: Optional[str] = "sdpa") -> Path:
         """
         A simple server for OpenVLA models; exposes `/act` to predict an action for a given image + instruction.
             => Takes in {"image": np.ndarray, "instruction": str, "unnorm_key": Optional[str]}
@@ -96,7 +97,7 @@ class OpenVLAServer:
                 payload = json.loads(payload["encoded"])
 
             # Parse payload components
-            image, instruction = payload["image"], payload["instruction"]
+            image, instruction = np.array(payload["image"], dtype=np.uint8), payload["instruction"]
             unnorm_key = payload.get("unnorm_key", None)
 
             # Run VLA Inference
@@ -127,6 +128,7 @@ class OpenVLAServer:
 class DeployConfig:
     # fmt: off
     openvla_path: Union[str, Path] = "openvla/openvla-7b"               # HF Hub Path (or path to local run directory)
+    attn_implementation: Optional[str] = "sdpa"                        # "flash_attention_2", "sdpa", or "eager"
 
     # Server Configuration
     host: str = "0.0.0.0"                                               # Host IP Address
@@ -137,7 +139,7 @@ class DeployConfig:
 
 @draccus.wrap()
 def deploy(cfg: DeployConfig) -> None:
-    server = OpenVLAServer(cfg.openvla_path)
+    server = OpenVLAServer(cfg.openvla_path, attn_implementation=cfg.attn_implementation)
     server.run(cfg.host, port=cfg.port)
 
 
